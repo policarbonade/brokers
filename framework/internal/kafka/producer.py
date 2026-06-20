@@ -3,8 +3,10 @@ from types import TracebackType
 from kafka import KafkaProducer
 import json
 
+from framework.internal.singleton import Singleton
 
-class Producer:
+
+class Producer(Singleton):
     def __init__(self, bootstrap_servers: list[str] = ['185.185.143.231:9092']):
         self._bootstrap_servers = bootstrap_servers
         self._producer: KafkaProducer | None = None
