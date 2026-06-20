@@ -12,3 +12,16 @@ class AccountApi:
             "password": password
             }
         return self._client.post("/register/user/async-register", json=data)
+
+    def activate_user(
+            self,
+            token: str
+    ) -> httpx.Response:
+        url = "/register/user/activate"
+        response = self._client.put(
+            url=url,
+            params={'token': token}
+        )
+        assert response.status_code == 200
+        assert response.json()["resource"] is not None
+        return response
