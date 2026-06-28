@@ -1,25 +1,46 @@
 import json
 import threading
 import time
+from collections import defaultdict
+
 from kafka import KafkaConsumer
 import queue
+from framework.internal.kafka.subscriber import Subscriber
+from framework.internal.singleton import Singleton
 
 list_ = []
 
 
-class Consumer:
-    def __init__(self, bootstrap_servers=["185.185.143.231:9092"], topic: str = "register-events"):
+class Consumer(Singleton):
+    _started: bool = False
+
+    def __init__(
+            self,
+            subscribers: list[Subscriber],
+            bootstrap_servers=["185.185.143.231:9092"],
+            ):
         self._bootstrap_servers = bootstrap_servers
-        self._topic = topic
+        self._subscribers = subscribers
         self._consumer: KafkaConsumer | None = None
         self._running = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
-        self._messages: queue.Queue = queue.Queue()
+        self._watchers: dict[str, list[Subscriber]] = defaultdict(list)
+
+    def register(self):
+        if self._subscribers is None:
+            raise RuntimeError("Subscribers is not initialized")
+
+        if self._started:
+            raise RuntimeError("Consumer is already started")
+
+        for subscriber in self._subscribers:
+            print(f"Registering subscribe {subscriber.topic}")
+            self._watchers[subscriber.topic].append(subscriber)
 
     def start(self):
         self._consumer = KafkaConsumer(
-            self._topic,
+            *self._watchers.keys(),
             bootstrap_servers=self._bootstrap_servers,
             auto_offset_reset="latest",
             value_deserializer=lambda x: json.loads(x.decode("utf-8")),
@@ -31,6 +52,7 @@ class Consumer:
 
         if not self._ready.wait(timeout=10):
             raise RuntimeError("Consumer is not ready")
+        self._started = True
 
     def _consume(self):
         self._ready.set()
@@ -38,18 +60,31 @@ class Consumer:
         try:
             while self._running.is_set():
                 messages = self._consumer.poll(timeout_ms=1000, max_records=10)
+                print("POLL:", messages)
+
+                tp = next(iter(self._consumer.assignment()))
+
+                print("POSITION:", self._consumer.position(tp))
+                print("END:", self._consumer.end_offsets([tp]))
+                print("COMMITTED:", self._consumer.committed(tp))
+
+                print("WATCHERS:", self._watchers)
+                print("TOPICS IN CONSUMER:", self._consumer.subscription())
+                print("ASSIGNMENT:", self._consumer.assignment())
+                print("PARTITIONS FOR TOPIC:", self._consumer.partitions_for_topic("register-events"))
                 for topic_partition, records in messages.items():
+                    topic = topic_partition.topic
                     for record in records:
-                        print(f"{topic_partition}: {record}")
-                        self._messages.put(record)
+                        for watcher in self._watchers[topic]:
+                            print(f"{topic}: {record}")
+                            watcher.handle_message(record)
+                    time.sleep(0.1)
+
+                if not messages:
+                    time.sleep(0.1)
+
         except Exception as e:
             print(f"Error: {e}")
-
-    def get_message(self, timeout=90):
-        try:
-            return self._messages.get(timeout=timeout)
-        except queue.Queue:
-            raise AssertionError("Queue is empty")
 
     def stop(self):
         self._running.clear()
@@ -67,11 +102,14 @@ class Consumer:
                 print(f"Error while closing consumer: {e}")
 
         del self._consumer
-        del self._messages
+        self._watchers.clear()
+        self._subscribers.clear()
+        self._started = False
 
         print("Consumer stopped")
 
     def __enter__(self):
+        self.register()
         self.start()
         return self
 
@@ -83,7 +121,7 @@ class Consumer:
         self.stop()
 
 
-if __name__ == "__main__":
-    with Consumer() as consumer:
-        message = consumer.get_message()
-        print(message)
+# if __name__ == "__main__":
+#     with Consumer() as consumer:
+#         message = consumer.get_message()
+#         print(message)

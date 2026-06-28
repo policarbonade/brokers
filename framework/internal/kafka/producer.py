@@ -37,6 +37,7 @@ class Producer(Singleton):
             with self._lock:
                 future = self._producer.send(topic, value=message)
                 record_metadata = future.get(timeout=10)
+                print("PRODUCED:", record_metadata.topic, record_metadata.partition, record_metadata.offset)
                 return record_metadata
         except Exception as e:
             raise RuntimeError(f"Failed to send message to kafka: {e}")
